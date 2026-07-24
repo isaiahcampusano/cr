@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cr-vision"
+version = "0.1.0"
+description = "Offline Clash Royale vision and game-state learning project"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "opencv-python>=4.9",
+  "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+ml = [
+  "ultralytics>=8.2",
+]
+
+[project.scripts]
+cr-vision = "cr_vision.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
