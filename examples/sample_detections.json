@@ -1,0 +1,14 @@
+[
+  {
+    "timestamp": 1.0,
+    "card": "hog_rider",
+    "confidence": 0.93,
+    "source_frame": "frame_000001.jpg"
+  },
+  {
+    "timestamp": 2.8,
+    "card": "cannon",
+    "confidence": 0.88,
+    "source_frame": "frame_000014.jpg"
+  }
+]

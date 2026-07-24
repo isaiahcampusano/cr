@@ -77,18 +77,23 @@ Positioned deployment labels can also include tile or screenshot metadata. Older
 card-only events remain valid.
 
 For a mocked local workflow, detector-style detections can be converted into
-`CardEvent` objects with `cr_vision.detector_adapter.detections_to_events`
-before calling the analyzer.
+For a mocked local workflow, detector-style detections can be loaded from a small JSON label file, converted into `CardEvent` objects with `cr_vision.detector_adapter.detections_to_events`, and then passed to `cr_vision.analyzer.analyze_events`.
 
 ```json
-{
-  "time": 12.4,
-  "player": "self",
-  "card": "hog_rider",
-  "tile": "self:regular:10:6",
-  "source_frame": "frame_000062.jpg",
-  "confidence": 1.0
-}
+[
+  {
+    "timestamp": 1.0,
+    "card": "hog_rider",
+    "confidence": 0.93,
+    "source_frame": "frame_000001.jpg"
+  },
+  {
+    "timestamp": 2.8,
+    "card": "cannon",
+    "confidence": 0.88,
+    "source_frame": "frame_000014.jpg"
+  }
+]
 ```
 
 Times are seconds from the start of the match. The analyzer assumes the match

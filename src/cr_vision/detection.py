@@ -11,6 +11,7 @@ class Detection:
     timestamp: float
     card: str
     confidence: float
+    source_frame: str | None = None
 
 
 class CardDetector:
