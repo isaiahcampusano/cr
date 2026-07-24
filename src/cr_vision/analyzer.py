@@ -13,6 +13,11 @@ class EventRecord(BaseModel):
     time: float = Field(ge=0)
     player: Literal["self", "opponent"]
     card: str
+    tile: str | None = None
+    x: float | None = None
+    y: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    source_frame: str | None = None
 
 
 class CycleStatusRecord(BaseModel):
@@ -23,6 +28,15 @@ class CycleStatusRecord(BaseModel):
     can_be_available: bool
 
 
+class UnitRecord(BaseModel):
+    card: str
+    owner: str
+    tile: str
+    deployed_at: float
+    confidence: float | None
+    source_frame: str | None
+
+
 class SnapshotRecord(BaseModel):
     time: float
     card: str
@@ -31,6 +45,7 @@ class SnapshotRecord(BaseModel):
     unavailable_cards: list[str]
     available_known_cards: list[str]
     cycle_statuses: list[CycleStatusRecord]
+    deployed_units: list[UnitRecord]
 
 
 class MatchAnalysis(BaseModel):
@@ -42,7 +57,16 @@ def load_events(path: Path) -> list[CardEvent]:
     raw_events = json.loads(path.read_text(encoding="utf-8"))
     records = [EventRecord.model_validate(event) for event in raw_events]
     return [
-        CardEvent(time=record.time, player=record.player, card=record.card)
+        CardEvent(
+            time=record.time,
+            player=record.player,
+            card=record.card,
+            tile=record.tile,
+            x=record.x,
+            y=record.y,
+            confidence=record.confidence,
+            source_frame=record.source_frame,
+        )
         for record in sorted(records, key=lambda item: item.time)
     ]
 
@@ -85,5 +109,16 @@ def _snapshot_record(snapshot: StateSnapshot) -> SnapshotRecord:
                 can_be_available=status.can_be_available,
             )
             for status in snapshot.cycle_statuses
+        ],
+        deployed_units=[
+            UnitRecord(
+                card=unit.card,
+                owner=unit.owner,
+                tile=unit.tile,
+                deployed_at=unit.deployed_at,
+                confidence=unit.confidence,
+                source_frame=unit.source_frame,
+            )
+            for unit in snapshot.board.units
         ],
     )

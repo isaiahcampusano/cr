@@ -33,10 +33,34 @@ The initial scope is intentionally fair and educational:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
+python -m cr_vision extract-frames raw/match_001.mp4 --output data/frames/match_001 --fps 5.0 --match-start 8.5 --dry-run
+python -m cr_vision describe-grid
+python -m cr_vision map-point examples/sample_calibration.json --x 105 --y 275
 python -m cr_vision analyze examples/sample_events.json
 python -m cr_vision analyze examples/sample_events.json --output data/processed/sample_report.json
 pytest
 ```
+
+## Frame Extraction
+
+The first computer-vision utility is frame extraction from recorded friendly
+matches. It samples video frames at a fixed rate and writes a `manifest.json`
+that maps each saved frame to both video time and match time.
+
+```powershell
+python -m cr_vision extract-frames raw/match_001.mp4 `
+  --output data/frames/match_001 `
+  --fps 5.0 `
+  --match-start 8.5
+```
+
+Helpful options:
+
+- `--dry-run`: estimate frame count and storage before writing files.
+- `--max-seconds`: stop after a match-time window.
+- `--crop x,y,w,h`: extract a region of interest before saving.
+- `--resize WIDTHxHEIGHT`: resize each saved frame.
+- `--format png`: switch from JPEG to PNG output.
 
 ## Event Format
 
@@ -47,6 +71,24 @@ Until the vision model is trained, the analyzer can run from labeled events:
   { "time": 4.2, "player": "opponent", "card": "hog_rider" },
   { "time": 9.8, "player": "opponent", "card": "cannon" }
 ]
+```
+
+Positioned deployment labels can also include tile or screenshot metadata. Older
+card-only events remain valid.
+
+For a mocked local workflow, detector-style detections can be converted into
+`CardEvent` objects with `cr_vision.detector_adapter.detections_to_events`
+before calling the analyzer.
+
+```json
+{
+  "time": 12.4,
+  "player": "self",
+  "card": "hog_rider",
+  "tile": "self:regular:10:6",
+  "source_frame": "frame_000062.jpg",
+  "confidence": 1.0
+}
 ```
 
 Times are seconds from the start of the match. The analyzer assumes the match
@@ -66,10 +108,37 @@ The cycle tracker only uses public information. It reports:
 The current implementation can:
 
 - Load manually labeled timestamped card events.
+- Load optional positioned deployment labels.
 - Estimate opponent elixir over time.
 - Track visible opponent cards without inventing hidden deck information.
+- Represent a 544-tile logical arena grid.
+- Track visible card deployments on arena tiles.
+- Map calibrated screenshot points to logical tiles.
 - Print a timeline in the terminal.
 - Export a JSON report with per-play public-state snapshots.
+
+The default future evaluation deck is the classic 2.6 Hog Cycle list:
+`hog_rider`, `musketeer`, `cannon`, `fireball`, `the_log`, `ice_spirit`,
+`skeletons`, and `ice_golem`.
+
+## Arena Grid
+
+The logical board contains 544 tiles:
+
+- 256 self-side regular tiles.
+- 256 opponent-side regular tiles.
+- 24 river tiles.
+- 8 bridge tiles.
+
+Tile IDs are stable strings such as `self:regular:10:6`,
+`opponent:regular:3:12`, `neutral:river:12:0`, and
+`neutral:bridge:left:0`.
+
+Use a calibration file to map screenshot pixels into this logical grid:
+
+```powershell
+python -m cr_vision map-point examples/sample_calibration.json --x 105 --y 275
+```
 
 ## GitHub
 

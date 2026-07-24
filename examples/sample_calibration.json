@@ -1,0 +1,10 @@
+{
+  "image_width": 160,
+  "image_height": 330,
+  "board": {
+    "left": 0,
+    "top": 0,
+    "width": 160,
+    "height": 330
+  }
+}

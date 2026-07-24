@@ -10,6 +10,8 @@ CARD_COSTS: dict[str, int] = {
     "fireball": 4,
     "goblin_barrel": 3,
     "hog_rider": 4,
+    "ice_golem": 2,
+    "ice_spirit": 1,
     "knight": 3,
     "mini_pekka": 4,
     "musketeer": 4,
@@ -19,6 +21,19 @@ CARD_COSTS: dict[str, int] = {
     "zap": 2,
 }
 
+HOG_26_CYCLE_DECK: tuple[str, ...] = (
+    "hog_rider",
+    "musketeer",
+    "cannon",
+    "fireball",
+    "the_log",
+    "ice_spirit",
+    "skeletons",
+    "ice_golem",
+)
+
+DEFAULT_EVALUATION_DECK: tuple[str, ...] = HOG_26_CYCLE_DECK
+
 
 def card_cost(card_name: str) -> int:
     try:
@@ -26,4 +41,3 @@ def card_cost(card_name: str) -> int:
     except KeyError as exc:
         known = ", ".join(sorted(CARD_COSTS))
         raise ValueError(f"Unknown card '{card_name}'. Known cards: {known}") from exc
-

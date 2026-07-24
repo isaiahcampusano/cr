@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from cr_vision.arena import tile_by_id
 from cr_vision.cards import card_cost
 
 
@@ -13,6 +14,54 @@ class CardEvent:
     time: float
     player: str
     card: str
+    tile: str | None = None
+    x: float | None = None
+    y: float | None = None
+    confidence: float | None = None
+    source_frame: str | None = None
+
+
+@dataclass(frozen=True)
+class UnitState:
+    card: str
+    owner: str
+    tile: str
+    deployed_at: float
+    confidence: float | None = None
+    source_frame: str | None = None
+
+
+@dataclass(frozen=True)
+class TowerState:
+    tower_id: str
+    owner: str
+    tile: str
+    hitpoints: int | None = None
+
+
+@dataclass(frozen=True)
+class BoardState:
+    units: tuple[UnitState, ...] = ()
+    towers: tuple[TowerState, ...] = ()
+
+    def with_deployment(self, event: CardEvent) -> "BoardState":
+        if event.tile is None:
+            return self
+
+        tile_by_id(event.tile)
+        unit = UnitState(
+            card=event.card,
+            owner=event.player,
+            tile=event.tile,
+            deployed_at=event.time,
+            confidence=event.confidence,
+            source_frame=event.source_frame,
+        )
+        return BoardState(units=(*self.units, unit), towers=self.towers)
+
+    @property
+    def occupied_tile_ids(self) -> tuple[str, ...]:
+        return tuple(unit.tile for unit in self.units)
 
 
 @dataclass(frozen=True)
@@ -45,6 +94,17 @@ class StateSnapshot:
     unavailable_cards: tuple[str, ...]
     available_known_cards: tuple[str, ...]
     cycle_statuses: tuple[CardCycleStatus, ...]
+    board: BoardState = field(default_factory=BoardState)
+
+
+@dataclass(frozen=True)
+class GameState:
+    time: float
+    opponent_elixir: float
+    known_deck: tuple[str, ...]
+    unavailable_cards: tuple[str, ...]
+    available_known_cards: tuple[str, ...]
+    board: BoardState
 
 
 @dataclass
@@ -73,12 +133,15 @@ class OpponentTracker:
     rules: ElixirRules = field(default_factory=ElixirRules)
     played_cards: list[str] = field(default_factory=list)
     played_events: list[CardEvent] = field(default_factory=list)
+    board: BoardState = field(default_factory=BoardState)
     elixir: ElixirState = field(init=False)
 
     def __post_init__(self) -> None:
         self.elixir = ElixirState(rules=self.rules)
 
     def observe(self, event: CardEvent) -> StateSnapshot | None:
+        self.board = self.board.with_deployment(event)
+
         if event.player != "opponent":
             return None
 
@@ -148,6 +211,17 @@ class OpponentTracker:
             unavailable_cards=self.unavailable_cards,
             available_known_cards=self.available_known_cards,
             cycle_statuses=self.cycle_statuses,
+            board=self.board,
+        )
+
+    def game_state(self, time: float) -> GameState:
+        return GameState(
+            time=time,
+            opponent_elixir=self.elixir.current,
+            known_deck=self.known_deck,
+            unavailable_cards=self.unavailable_cards,
+            available_known_cards=self.available_known_cards,
+            board=self.board,
         )
 
 
