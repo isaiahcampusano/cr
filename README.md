@@ -76,8 +76,10 @@ Until the vision model is trained, the analyzer can run from labeled events:
 Positioned deployment labels can also include tile or screenshot metadata. Older
 card-only events remain valid.
 
-For a mocked local workflow, detector-style detections can be converted into
-For a mocked local workflow, detector-style detections can be loaded from a small JSON label file, converted into `CardEvent` objects with `cr_vision.detector_adapter.detections_to_events`, and then passed to `cr_vision.analyzer.analyze_events`.
+For a mocked local workflow, detector-style detections can be loaded from a
+small JSON label file, converted into `CardEvent` objects with
+`cr_vision.detector_adapter.detections_to_events`, and then passed to
+`cr_vision.analyzer.analyze_events`.
 
 ```json
 [
