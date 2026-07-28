@@ -28,6 +28,21 @@ def _parse_crop(raw_value: str) -> tuple[int, int, int, int]:
         raise argparse.ArgumentTypeError("crop must look like x,y,w,h") from exc
 
 
+def _parse_slot_centers(raw_value: str) -> tuple[float, float, float, float]:
+    try:
+        values = tuple(float(value) for value in raw_value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "slot centers must look like LEFT,LEFT_CENTER,RIGHT_CENTER,RIGHT"
+        ) from exc
+
+    if len(values) != 4 or tuple(sorted(values)) != values:
+        raise argparse.ArgumentTypeError(
+            "slot centers must contain four left-to-right values"
+        )
+    return (values[0], values[1], values[2], values[3])
+
+
 def _format_bytes(size_bytes: int) -> str:
     suffixes = ["B", "KB", "MB", "GB"]
     size = float(size_bytes)
@@ -69,18 +84,27 @@ def main() -> None:
     detect_parser = subparsers.add_parser("detect-video")
     detect_parser.add_argument("video_path", type=Path)
     detect_parser.add_argument("--output", type=Path, required=True)
-    detect_parser.add_argument("--model-id", default="offline-fake-backend")
+    detect_parser.add_argument("--model-id")
     detect_parser.add_argument("--model-version", default="0")
     detect_parser.add_argument("--dataset-version", default="0")
     detect_parser.add_argument("--source-video")
     detect_parser.add_argument("--backend", choices=["fake", "roboflow"], default="fake")
     detect_parser.add_argument("--roboflow-endpoint")
+    detect_parser.add_argument("--sample-fps", type=float, default=3.0)
 
     eventize_parser = subparsers.add_parser("eventize")
     eventize_parser.add_argument("raw_detections", type=Path)
     eventize_parser.add_argument("--output", type=Path, required=True)
     eventize_parser.add_argument("--confidence-threshold", type=float, default=0.50)
     eventize_parser.add_argument("--player-perspective", default="self")
+    eventize_parser.add_argument("--stability-observations", type=int, default=3)
+    eventize_parser.add_argument("--stability-window", type=int, default=5)
+    eventize_parser.add_argument(
+        "--slot-centers",
+        type=_parse_slot_centers,
+        default=(0.18, 0.38, 0.58, 0.78),
+    )
+    eventize_parser.add_argument("--slot-tolerance", type=float, default=0.10)
 
     args = parser.parse_args()
 
@@ -185,17 +209,20 @@ def main() -> None:
                     model_id=args.model_id,
                     endpoint=args.roboflow_endpoint,
                 )
+                resolved_model_id = backend.model_id
             else:
                 backend = FakeDetectorBackend()
+                resolved_model_id = args.model_id or "offline-fake-backend"
 
             detections = detect_video(
                 args.video_path,
                 backend=backend,
                 output_path=args.output,
-                model_id=args.model_id,
+                model_id=resolved_model_id,
                 model_version=args.model_version,
                 dataset_version=args.dataset_version,
                 source_video=args.source_video or str(args.video_path),
+                sample_fps=args.sample_fps,
             )
             print(f"Wrote {len(detections)} raw detections to {args.output}")
             return
@@ -205,6 +232,10 @@ def main() -> None:
             config = EventizerConfig(
                 confidence_threshold=args.confidence_threshold,
                 player_perspective=args.player_perspective,
+                stability_observations=args.stability_observations,
+                stability_window=args.stability_window,
+                slot_centers=args.slot_centers,
+                slot_tolerance=args.slot_tolerance,
             )
             eventizer = HandEventizer(config)
             events = eventizer.eventize(detections)

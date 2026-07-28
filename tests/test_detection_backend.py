@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from cr_vision.detection import FrameDetection
 from cr_vision.detection_backend import (
     FakeDetectorBackend,
+    detect_video,
     load_frame_detections_jsonl,
     parse_roboflow_response,
     write_frame_detections_jsonl,
 )
+from cr_vision.roboflow_backend import RoboflowDetectorBackend
 
 
 def test_parse_roboflow_response_to_frame_detections() -> None:
@@ -110,3 +115,88 @@ def test_fake_backend_returns_preloaded_detections() -> None:
     detections = backend.detect_frame(frame=None, timestamp=1.0, source_frame="frame_000001.jpg")
 
     assert detections[0].label == "hog_rider"
+
+
+def test_detect_video_samples_frames_before_calling_the_backend(tmp_path: Path) -> None:
+    video_path = _create_video(tmp_path / "sample.avi", fps=10.0, frame_count=10)
+    output_path = tmp_path / "raw_detections.jsonl"
+    backend = _RecordingBackend()
+
+    detections = detect_video(
+        video_path,
+        backend=backend,
+        output_path=output_path,
+        model_id="fake-model",
+        model_version="1",
+        dataset_version="1",
+        source_video=str(video_path),
+        sample_fps=2.0,
+    )
+
+    assert detections == []
+    assert backend.timestamps == [0.0, 0.5]
+    assert output_path.read_text(encoding="utf-8") == ""
+
+
+def test_detect_video_rejects_non_positive_sample_rate(tmp_path: Path) -> None:
+    video_path = _create_video(tmp_path / "sample.avi", fps=10.0, frame_count=1)
+
+    try:
+        detect_video(
+            video_path,
+            backend=_RecordingBackend(),
+            output_path=tmp_path / "raw_detections.jsonl",
+            model_id="fake-model",
+            model_version="1",
+            dataset_version="1",
+            source_video=str(video_path),
+            sample_fps=0.0,
+        )
+    except ValueError as exc:
+        assert "sample_fps" in str(exc)
+    else:
+        raise AssertionError("Expected an invalid sample rate to fail")
+
+
+def test_roboflow_backend_uses_the_current_serverless_endpoint() -> None:
+    backend = RoboflowDetectorBackend(
+        api_key="test-key",
+        model_id="zay-clio1/example-model",
+    )
+
+    assert backend.endpoint == "https://serverless.roboflow.com"
+    assert backend.model_id == "zay-clio1/example-model"
+
+
+class _RecordingBackend:
+    def __init__(self) -> None:
+        self.timestamps: list[float] = []
+
+    def detect_frame(
+        self,
+        frame: object,
+        *,
+        timestamp: float,
+        source_frame: str | None,
+    ) -> list[FrameDetection]:
+        self.timestamps.append(timestamp)
+        return []
+
+
+def _create_video(path: Path, *, fps: float, frame_count: int) -> Path:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        fps,
+        (16, 16),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not create test video at {path}")
+
+    try:
+        for index in range(frame_count):
+            writer.write(np.full((16, 16, 3), index, dtype=np.uint8))
+    finally:
+        writer.release()
+
+    return path

@@ -8,7 +8,7 @@ from cr_vision.cards import card_cost
 from cr_vision.detection import FrameDetection
 
 
-ROBOWFLOW_LABEL_MAP = {
+ROBOFLOW_LABEL_MAP = {
     "Kanon In Hand": "cannon",
     "Skelet In hand": "skeletons",
     "Vuurbal In Hand": "fireball",
@@ -87,7 +87,7 @@ def parse_roboflow_response(
             width = width_px
             height = height_px
 
-        canonical_label = ROBOWFLOW_LABEL_MAP.get(label)
+        canonical_label = ROBOFLOW_LABEL_MAP.get(label)
         if canonical_label is None:
             try:
                 card_cost(label)
@@ -185,13 +185,19 @@ def detect_video(
     model_version: str,
     dataset_version: str,
     source_video: str,
+    sample_fps: float | None = 3.0,
 ) -> list[FrameDetection]:
+    if sample_fps is not None and sample_fps <= 0.0:
+        raise ValueError("sample_fps must be positive when provided")
+
     capture = __import__("cv2").VideoCapture(str(video_path))
     if not capture.isOpened():
         raise ValueError(f"Could not open video: {video_path}")
 
     try:
         fps = capture.get(__import__("cv2").CAP_PROP_FPS) or 30.0
+        sample_interval = 1.0 / sample_fps if sample_fps is not None else None
+        next_sample_time = 0.0
         detections: list[FrameDetection] = []
         frame_index = 0
 
@@ -202,6 +208,13 @@ def detect_video(
 
             timestamp = frame_index / fps
             frame_index += 1
+            if sample_interval is not None and timestamp + 1e-9 < next_sample_time:
+                continue
+
+            if sample_interval is not None:
+                while next_sample_time <= timestamp + 1e-9:
+                    next_sample_time += sample_interval
+
             frame_detections = backend.detect_frame(
                 frame,
                 timestamp=timestamp,
