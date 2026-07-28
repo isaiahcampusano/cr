@@ -1,0 +1,12 @@
+{
+  "predictions": [
+    {
+      "class": "Hog Rider",
+      "confidence": 0.91,
+      "x_center": 0.41,
+      "y_center": 0.31,
+      "width": 0.12,
+      "height": 0.15
+    }
+  ]
+}

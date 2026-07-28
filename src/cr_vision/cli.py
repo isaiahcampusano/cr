@@ -6,6 +6,7 @@ from pathlib import Path
 from cr_vision.analyzer import analyze_events, load_events, write_report
 from cr_vision.arena import BOARD_TILE_COUNT, tile_by_id, tile_counts_by_region, validate_arena
 from cr_vision.calibration import load_calibration, map_point_to_tile
+from cr_vision.detection_backend import FakeDetectorBackend, detect_video
 from cr_vision.frames import extract_frames, plan_frame_extraction
 
 
@@ -62,6 +63,14 @@ def main() -> None:
     extract_parser.add_argument("--format", choices=["jpg", "png"], default="jpg")
     extract_parser.add_argument("--jpeg-quality", type=int, default=90)
     extract_parser.add_argument("--dry-run", action="store_true")
+
+    detect_parser = subparsers.add_parser("detect-video")
+    detect_parser.add_argument("video_path", type=Path)
+    detect_parser.add_argument("--output", type=Path, required=True)
+    detect_parser.add_argument("--model-id", default="offline-fake-backend")
+    detect_parser.add_argument("--model-version", default="0")
+    detect_parser.add_argument("--dataset-version", default="0")
+    detect_parser.add_argument("--source-video")
 
     args = parser.parse_args()
 
@@ -158,6 +167,20 @@ def main() -> None:
             )
             print(f"Extracted {manifest.frame_count} frames")
             print(f"Manifest: {args.output / 'manifest.json'}")
+            return
+
+        if args.command == "detect-video":
+            detections = detect_video(
+                args.video_path,
+                backend=FakeDetectorBackend(),
+                output_path=args.output,
+                model_id=args.model_id,
+                model_version=args.model_version,
+                dataset_version=args.dataset_version,
+                source_video=args.source_video or str(args.video_path),
+            )
+            print(f"Wrote {len(detections)} raw detections to {args.output}")
+            return
     except ValueError as exc:
         parser.exit(2, f"error: {exc}\n")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import cv2
 
@@ -12,6 +13,31 @@ class Detection:
     card: str
     confidence: float
     source_frame: str | None = None
+
+
+@dataclass(frozen=True)
+class FrameDetection:
+    """Normalized output from a single frame inference pass."""
+
+    timestamp: float
+    label: str
+    confidence: float
+    x_center: float
+    y_center: float
+    width: float
+    height: float
+    source_frame: str | None = None
+
+
+class DetectorBackend(Protocol):
+    def detect_frame(
+        self,
+        frame: object,
+        *,
+        timestamp: float,
+        source_frame: str | None,
+    ) -> list[FrameDetection]:
+        ...
 
 
 class CardDetector:
