@@ -7,6 +7,7 @@ from cr_vision.analyzer import analyze_events, load_events, write_report
 from cr_vision.arena import BOARD_TILE_COUNT, tile_by_id, tile_counts_by_region, validate_arena
 from cr_vision.calibration import load_calibration, map_point_to_tile
 from cr_vision.detection_backend import FakeDetectorBackend, detect_video
+from cr_vision.eventizer import HandEventizer, EventizerConfig, load_frame_detections, write_events
 from cr_vision.frames import extract_frames, plan_frame_extraction
 from cr_vision.roboflow_backend import RoboflowDetectorBackend
 
@@ -74,6 +75,12 @@ def main() -> None:
     detect_parser.add_argument("--source-video")
     detect_parser.add_argument("--backend", choices=["fake", "roboflow"], default="fake")
     detect_parser.add_argument("--roboflow-endpoint")
+
+    eventize_parser = subparsers.add_parser("eventize")
+    eventize_parser.add_argument("raw_detections", type=Path)
+    eventize_parser.add_argument("--output", type=Path, required=True)
+    eventize_parser.add_argument("--confidence-threshold", type=float, default=0.50)
+    eventize_parser.add_argument("--player-perspective", default="self")
 
     args = parser.parse_args()
 
@@ -191,6 +198,18 @@ def main() -> None:
                 source_video=args.source_video or str(args.video_path),
             )
             print(f"Wrote {len(detections)} raw detections to {args.output}")
+            return
+
+        if args.command == "eventize":
+            detections = load_frame_detections(args.raw_detections)
+            config = EventizerConfig(
+                confidence_threshold=args.confidence_threshold,
+                player_perspective=args.player_perspective,
+            )
+            eventizer = HandEventizer(config)
+            events = eventizer.eventize(detections)
+            write_events(args.output, events)
+            print(f"Wrote {len(events)} events to {args.output}")
             return
     except ValueError as exc:
         parser.exit(2, f"error: {exc}\n")
