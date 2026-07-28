@@ -6,11 +6,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cr_vision.detection import FrameDetection
+from cr_vision.detection_backend import load_frame_detections_jsonl
 from cr_vision.state import CardEvent
 
 
 @dataclass(frozen=True)
 class HandObservation:
+    """One sampled frame's visible hand state.
+
+    ``None`` means the slot is unknown because the detector did not provide
+    enough evidence. It does not mean the game UI showed an empty slot.
+    """
+
     timestamp: float
     slots: tuple[str | None, str | None, str | None, str | None]
     confidences: tuple[float | None, float | None, float | None, float | None]
@@ -31,115 +38,129 @@ class HandStateTransition:
 @dataclass
 class EventizerConfig:
     confidence_threshold: float = 0.50
-    sample_fps: float = 3.0
     stability_observations: int = 3
+    stability_window: int = 5
     player_perspective: str = "self"
-    slot_centers: tuple[float, ...] = (0.18, 0.38, 0.58, 0.78)
+    slot_centers: tuple[float, float, float, float] = (0.18, 0.38, 0.58, 0.78)
     slot_tolerance: float = 0.10
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold must be between 0 and 1")
+        if self.stability_observations < 1:
+            raise ValueError("stability_observations must be positive")
+        if self.stability_window < self.stability_observations:
+            raise ValueError("stability_window must be at least stability_observations")
+        if self.slot_tolerance <= 0.0:
+            raise ValueError("slot_tolerance must be positive")
+        if tuple(sorted(self.slot_centers)) != self.slot_centers:
+            raise ValueError("slot_centers must be ordered from left to right")
 
 
 class HandEventizer:
+    """Turn stable, complete local-hand observations into card-play events."""
+
     def __init__(self, config: EventizerConfig | None = None) -> None:
         self.config = config or EventizerConfig()
         self._observations: list[HandObservation] = []
-        self._stable_states: list[tuple[HandObservation, str | None]] = []
-        self._last_stable_slots: list[str | None] = [None, None, None, None]
-        self._last_stable_confidences: list[float | None] = [None, None, None, None]
-        self._last_stable_frames: list[str | None] = [None, None, None, None]
+        self._last_complete_state: HandObservation | None = None
         self.diagnostics: list[dict[str, object]] = []
 
     def observe_detections(self, detections: list[FrameDetection]) -> list[HandObservation]:
-        if not detections:
-            return []
+        """Group all boxes from each frame before assigning their fixed slots."""
+        grouped: dict[tuple[float, str | None], list[FrameDetection]] = {}
+        for detection in detections:
+            key = (detection.timestamp, detection.source_frame)
+            grouped.setdefault(key, []).append(detection)
 
-        grouped: list[HandObservation] = []
-        for detection in sorted(detections, key=lambda item: item.timestamp):
-            if detection.confidence < self.config.confidence_threshold:
-                continue
-            if detection.canonical_label is None:
-                continue
-
-            slot_index = self._assign_slot(detection)
-            if slot_index is None:
-                continue
-
-            grouped.append(
-                HandObservation(
-                    timestamp=detection.timestamp,
-                    slots=(None, None, None, None),
-                    confidences=(None, None, None, None),
-                    evidence_frames=(None, None, None, None),
-                )
+        return [
+            self._build_observation(frame_detections)
+            for _key, frame_detections in sorted(
+                grouped.items(),
+                key=lambda item: (item[1][0].timestamp, item[1][0].source_frame or ""),
             )
-
-        return grouped
+        ]
 
     def _assign_slot(self, detection: FrameDetection) -> int | None:
-        for index, center in enumerate(self.config.slot_centers):
-            if abs(detection.x_center - center) <= self.config.slot_tolerance:
-                return index
-        return None
+        distances = [abs(detection.x_center - center) for center in self.config.slot_centers]
+        nearest_slot = min(range(4), key=distances.__getitem__)
+        if distances[nearest_slot] > self.config.slot_tolerance:
+            return None
+        return nearest_slot
 
     def _build_observation(self, detections: list[FrameDetection]) -> HandObservation:
-        slots: list[str | None] = [None, None, None, None]
-        confidences: list[float | None] = [None, None, None, None]
-        evidence_frames: list[str | None] = [None, None, None, None]
+        if not detections:
+            raise ValueError("A hand observation requires at least one frame detection")
 
-        for detection in sorted(detections, key=lambda item: item.timestamp):
+        selected: list[FrameDetection | None] = [None, None, None, None]
+        for detection in detections:
             if detection.confidence < self.config.confidence_threshold:
                 continue
             if detection.canonical_label is None:
                 continue
+
             slot_index = self._assign_slot(detection)
             if slot_index is None:
                 continue
-            slots[slot_index] = detection.canonical_label
-            confidences[slot_index] = detection.confidence
-            evidence_frames[slot_index] = detection.source_frame
+
+            current = selected[slot_index]
+            if current is not None and current.canonical_label != detection.canonical_label:
+                self.diagnostics.append(
+                    {
+                        "timestamp": detection.timestamp,
+                        "reason": "slot_conflict",
+                        "slot": slot_index,
+                        "existing_label": current.canonical_label,
+                        "competing_label": detection.canonical_label,
+                    }
+                )
+            if current is None or detection.confidence > current.confidence:
+                selected[slot_index] = detection
 
         return HandObservation(
-            timestamp=detections[-1].timestamp if detections else 0.0,
-            slots=tuple(slots),
-            confidences=tuple(confidences),
-            evidence_frames=tuple(evidence_frames),
+            timestamp=detections[0].timestamp,
+            slots=tuple(
+                detection.canonical_label if detection is not None else None
+                for detection in selected
+            ),
+            confidences=tuple(
+                detection.confidence if detection is not None else None
+                for detection in selected
+            ),
+            evidence_frames=tuple(
+                detection.source_frame if detection is not None else None
+                for detection in selected
+            ),
         )
 
     def stable_observation(self, observation: HandObservation) -> HandObservation:
+        """Return a per-slot majority vote across the most recent observations."""
         self._observations.append(observation)
-        if len(self._observations) < self.config.stability_observations:
-            return observation
+        window = self._observations[-self.config.stability_window :]
 
-        window = self._observations[-self.config.stability_observations :]
         stable_slots: list[str | None] = [None, None, None, None]
         stable_confidences: list[float | None] = [None, None, None, None]
         stable_frames: list[str | None] = [None, None, None, None]
 
         for slot_index in range(4):
-            slot_values = [item.slots[slot_index] for item in window]
-            slot_confidences = [item.confidences[slot_index] for item in window]
-            slot_frames = [item.evidence_frames[slot_index] for item in window]
-            latest_value = next(
-                (value for value in reversed(slot_values) if value is not None),
-                None,
-            )
-            if latest_value is not None:
-                stable_slots[slot_index] = latest_value
-                stable_confidences[slot_index] = next(
-                    (value for value in reversed(slot_confidences) if value is not None),
-                    None,
-                )
-                stable_frames[slot_index] = next(
-                    (frame for frame in reversed(slot_frames) if frame is not None),
-                    None,
-                )
-            elif self._last_stable_slots[slot_index] is not None:
-                stable_slots[slot_index] = self._last_stable_slots[slot_index]
-                stable_confidences[slot_index] = self._last_stable_confidences[slot_index]
-                stable_frames[slot_index] = self._last_stable_frames[slot_index]
+            values = [
+                item.slots[slot_index]
+                for item in window
+                if item.slots[slot_index] is not None
+            ]
+            if not values:
+                continue
 
-        self._last_stable_slots = stable_slots
-        self._last_stable_confidences = stable_confidences
-        self._last_stable_frames = stable_frames
+            card, count = Counter(values).most_common(1)[0]
+            if count < self.config.stability_observations:
+                continue
+
+            stable_slots[slot_index] = card
+            for item in reversed(window):
+                if item.slots[slot_index] == card:
+                    stable_confidences[slot_index] = item.confidences[slot_index]
+                    stable_frames[slot_index] = item.evidence_frames[slot_index]
+                    break
 
         return HandObservation(
             timestamp=observation.timestamp,
@@ -149,97 +170,97 @@ class HandEventizer:
         )
 
     def eventize(self, detections: list[FrameDetection]) -> list[CardEvent]:
-        if not detections:
-            return []
-
-        observations = [
-            self._build_observation([item])
-            for item in detections
-            if item.confidence >= self.config.confidence_threshold
-            and item.canonical_label is not None
-        ]
-        if not observations:
-            return []
-
-        stable_observations: list[HandObservation] = []
         events: list[CardEvent] = []
-        previous_state: HandObservation | None = None
 
-        for observation in observations:
-            stable_observation = self.stable_observation(observation)
-            stable_observations.append(stable_observation)
-            if previous_state is None:
-                previous_state = stable_observation
+        for observation in self.observe_detections(detections):
+            stable_state = self.stable_observation(observation)
+            if not _is_complete(stable_state):
                 continue
 
-            if _state_signature(stable_observation) == _state_signature(previous_state):
+            if self._last_complete_state is None:
+                self._last_complete_state = stable_state
                 continue
 
-            previous_slots = tuple(slot for slot in previous_state.slots if slot is not None)
-            current_slots = tuple(slot for slot in stable_observation.slots if slot is not None)
-            removed = tuple(card for card in previous_slots if card not in current_slots)
-            added = tuple(card for card in current_slots if card not in previous_slots)
+            if _state_signature(stable_state) == _state_signature(self._last_complete_state):
+                continue
+
+            removed, added = _state_difference(self._last_complete_state, stable_state)
             if len(removed) == 1 and len(added) == 1:
-                evidence_frame = next(
-                    (
-                        frame
-                        for frame in stable_observation.evidence_frames
-                        if frame is not None
-                    ),
-                    None,
+                removed_card = removed[0]
+                added_card = added[0]
+                removed_confidence, _removed_frame = _evidence_for_card(
+                    self._last_complete_state,
+                    removed_card,
                 )
+                added_confidence, added_frame = _evidence_for_card(
+                    stable_state,
+                    added_card,
+                )
+                confidence_values = [
+                    value
+                    for value in (removed_confidence, added_confidence)
+                    if value is not None
+                ]
+                confidence = min(confidence_values) if confidence_values else 0.0
                 events.append(
                     CardEvent(
-                        time=stable_observation.timestamp,
+                        time=stable_state.timestamp,
                         player=self.config.player_perspective,
-                        card=removed[0],
-                        confidence=0.5,
-                        source_frame=evidence_frame,
+                        card=removed_card,
+                        confidence=confidence,
+                        source_frame=added_frame,
                     )
                 )
-            elif removed or added:
+            else:
                 self.diagnostics.append(
                     {
-                        "timestamp": stable_observation.timestamp,
+                        "timestamp": stable_state.timestamp,
                         "reason": "ambiguous_transition",
-                        "previous_slots": list(previous_slots),
-                        "current_slots": list(current_slots),
+                        "previous_slots": list(self._last_complete_state.slots),
+                        "current_slots": list(stable_state.slots),
+                        "removed_cards": list(removed),
+                        "added_cards": list(added),
                     }
                 )
 
-            previous_state = stable_observation
+            # Move the baseline forward even after an ambiguous change. This
+            # avoids cascading one uncertain transition into later plays.
+            self._last_complete_state = stable_state
 
         return events
 
 
-def _state_signature(state: HandObservation) -> tuple[tuple[str | None, ...], tuple[float | None, ...]]:
-    return (state.slots, state.confidences)
+def _is_complete(state: HandObservation) -> bool:
+    return all(card is not None for card in state.slots)
+
+
+def _state_signature(state: HandObservation) -> tuple[str | None, str | None, str | None, str | None]:
+    return state.slots
+
+
+def _state_difference(
+    previous_state: HandObservation,
+    current_state: HandObservation,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    previous_cards = Counter(card for card in previous_state.slots if card is not None)
+    current_cards = Counter(card for card in current_state.slots if card is not None)
+    removed = tuple((previous_cards - current_cards).elements())
+    added = tuple((current_cards - previous_cards).elements())
+    return removed, added
+
+
+def _evidence_for_card(
+    state: HandObservation,
+    card: str,
+) -> tuple[float | None, str | None]:
+    for index, value in enumerate(state.slots):
+        if value == card:
+            return state.confidences[index], state.evidence_frames[index]
+    return None, None
 
 
 def load_frame_detections(path: Path) -> list[FrameDetection]:
-    detections: list[FrameDetection] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            payload = json.loads(line)
-            detections.append(
-                FrameDetection(
-                    timestamp=float(payload["timestamp"]),
-                    label=str(payload["raw_label"]),
-                    confidence=float(payload["confidence"]),
-                    x_center=float(payload["bbox"]["x_center"]),
-                    y_center=float(payload["bbox"]["y_center"]),
-                    width=float(payload["bbox"]["width"]),
-                    height=float(payload["bbox"]["height"]),
-                    source_frame=payload.get("source_frame"),
-                    class_id=int(payload["class_id"]) if payload.get("class_id") is not None else None,
-                    detection_id=str(payload["detection_id"]) if payload.get("detection_id") is not None else None,
-                    canonical_label=payload.get("canonical_label"),
-                )
-            )
-    return detections
+    return load_frame_detections_jsonl(path)
 
 
 def write_events(path: Path, events: list[CardEvent]) -> None:

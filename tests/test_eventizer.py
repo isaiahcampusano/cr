@@ -5,60 +5,165 @@ from cr_vision.eventizer import EventizerConfig, HandEventizer
 from cr_vision.state import CardEvent
 
 
-def test_four_slots_are_assigned_without_renumbering() -> None:
-    eventizer = HandEventizer(EventizerConfig(confidence_threshold=0.5))
-    detections = [
-        FrameDetection(timestamp=0.0, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon"),
-        FrameDetection(timestamp=0.1, label="x", confidence=0.9, x_center=0.38, y_center=0.2, width=0.05, height=0.05, canonical_label="fireball"),
-        FrameDetection(timestamp=0.2, label="x", confidence=0.9, x_center=0.58, y_center=0.2, width=0.05, height=0.05, canonical_label="skeletons"),
-        FrameDetection(timestamp=0.3, label="x", confidence=0.9, x_center=0.78, y_center=0.2, width=0.05, height=0.05, canonical_label="ice_spirit"),
+SLOT_CENTERS = (0.18, 0.38, 0.58, 0.78)
+INITIAL_HAND = ("cannon", "fireball", "skeletons", "ice_spirit")
+ROTATED_HAND = ("fireball", "skeletons", "ice_spirit", "musketeer")
+
+
+def _frame(
+    timestamp: float,
+    slots: tuple[str | None, str | None, str | None, str | None],
+    *,
+    source_frame: str,
+    confidence: float = 0.9,
+) -> list[FrameDetection]:
+    return [
+        FrameDetection(
+            timestamp=timestamp,
+            label=card,
+            confidence=confidence,
+            x_center=SLOT_CENTERS[index],
+            y_center=0.9,
+            width=0.08,
+            height=0.1,
+            source_frame=source_frame,
+            canonical_label=card,
+        )
+        for index, card in enumerate(slots)
+        if card is not None
     ]
 
-    observation = eventizer._build_observation(detections)
 
-    assert observation.slots == ("cannon", "fireball", "skeletons", "ice_spirit")
-
-
-def test_transient_flicker_produces_no_event() -> None:
-    eventizer = HandEventizer(EventizerConfig(confidence_threshold=0.5, stability_observations=3))
-    first = [FrameDetection(timestamp=0.0, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon")]
-    second = [FrameDetection(timestamp=0.1, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon")]
-    third = [FrameDetection(timestamp=0.2, label="x", confidence=0.9, x_center=0.38, y_center=0.2, width=0.05, height=0.05, canonical_label="fireball")]
-
-    events = eventizer.eventize(first + second + third)
-
-    assert events == []
+def _eventizer() -> HandEventizer:
+    return HandEventizer(
+        EventizerConfig(
+            confidence_threshold=0.5,
+            stability_observations=3,
+            stability_window=5,
+        )
+    )
 
 
-def test_confirmed_transition_emits_one_card_event() -> None:
-    eventizer = HandEventizer(EventizerConfig(confidence_threshold=0.5, stability_observations=3))
-    detections = [
-        FrameDetection(timestamp=0.0, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_a.jpg"),
-        FrameDetection(timestamp=0.4, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_b.jpg"),
-        FrameDetection(timestamp=0.8, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_c.jpg"),
-        FrameDetection(timestamp=1.2, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="fireball", source_frame="frame_d.jpg"),
+def test_fixed_slots_do_not_renumber_after_a_missing_middle_detection() -> None:
+    eventizer = _eventizer()
+    detections = _frame(
+        0.0,
+        ("cannon", None, "skeletons", "ice_spirit"),
+        source_frame="frame_000000.jpg",
+    )
+
+    observation = eventizer.observe_detections(detections)[0]
+
+    assert observation.slots == ("cannon", None, "skeletons", "ice_spirit")
+
+
+def test_conflicting_detections_in_one_slot_are_diagnosed() -> None:
+    eventizer = _eventizer()
+    detections = _frame(
+        0.0,
+        ("cannon", None, None, None),
+        source_frame="frame_000000.jpg",
+        confidence=0.8,
+    ) + [
+        FrameDetection(
+            timestamp=0.0,
+            label="fireball",
+            confidence=0.9,
+            x_center=SLOT_CENTERS[0],
+            y_center=0.9,
+            width=0.08,
+            height=0.1,
+            source_frame="frame_000000.jpg",
+            canonical_label="fireball",
+        )
     ]
+
+    observation = eventizer.observe_detections(detections)[0]
+
+    assert observation.slots[0] == "fireball"
+    assert eventizer.diagnostics[0]["reason"] == "slot_conflict"
+
+
+def test_repeated_stable_hand_with_varying_confidence_emits_no_event() -> None:
+    eventizer = _eventizer()
+    detections = (
+        _frame(0.0, INITIAL_HAND, source_frame="frame_000000.jpg", confidence=0.91)
+        + _frame(0.4, INITIAL_HAND, source_frame="frame_000001.jpg", confidence=0.84)
+        + _frame(0.8, INITIAL_HAND, source_frame="frame_000002.jpg", confidence=0.96)
+        + _frame(1.2, INITIAL_HAND, source_frame="frame_000003.jpg", confidence=0.88)
+    )
+
+    assert eventizer.eventize(detections) == []
+
+
+def test_one_frame_flicker_does_not_emit_a_play() -> None:
+    eventizer = _eventizer()
+    detections = (
+        _frame(0.0, INITIAL_HAND, source_frame="frame_000000.jpg")
+        + _frame(0.4, INITIAL_HAND, source_frame="frame_000001.jpg")
+        + _frame(0.8, INITIAL_HAND, source_frame="frame_000002.jpg")
+        + _frame(1.2, ROTATED_HAND, source_frame="frame_000003.jpg")
+        + _frame(1.6, INITIAL_HAND, source_frame="frame_000004.jpg")
+        + _frame(2.0, INITIAL_HAND, source_frame="frame_000005.jpg")
+    )
+
+    assert eventizer.eventize(detections) == []
+
+
+def test_confirmed_complete_hand_transition_emits_one_play() -> None:
+    eventizer = _eventizer()
+    detections = (
+        _frame(0.0, INITIAL_HAND, source_frame="old_0.jpg")
+        + _frame(0.4, INITIAL_HAND, source_frame="old_1.jpg")
+        + _frame(0.8, INITIAL_HAND, source_frame="old_2.jpg")
+        + _frame(1.2, ROTATED_HAND, source_frame="new_0.jpg")
+        + _frame(1.6, ROTATED_HAND, source_frame="new_1.jpg")
+        + _frame(2.0, ROTATED_HAND, source_frame="new_2.jpg")
+        + _frame(2.4, ROTATED_HAND, source_frame="new_3.jpg")
+    )
 
     events = eventizer.eventize(detections)
 
-    assert len(events) == 1
-    assert isinstance(events[0], CardEvent)
-    assert events[0].card == "cannon"
-    assert events[0].player == "self"
-    assert events[0].source_frame == "frame_d.jpg"
-
-
-def test_ambiguous_transition_is_logged_and_rejected() -> None:
-    eventizer = HandEventizer(EventizerConfig(confidence_threshold=0.5, stability_observations=3))
-    detections = [
-        FrameDetection(timestamp=0.0, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_a.jpg"),
-        FrameDetection(timestamp=0.4, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_b.jpg"),
-        FrameDetection(timestamp=0.8, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_c.jpg"),
-        FrameDetection(timestamp=1.2, label="x", confidence=0.9, x_center=0.38, y_center=0.2, width=0.05, height=0.05, canonical_label="fireball", source_frame="frame_d.jpg"),
-        FrameDetection(timestamp=1.6, label="x", confidence=0.9, x_center=0.58, y_center=0.2, width=0.05, height=0.05, canonical_label="skeletons", source_frame="frame_e.jpg"),
+    assert events == [
+        CardEvent(
+            time=2.0,
+            player="self",
+            card="cannon",
+            confidence=0.9,
+            source_frame="new_2.jpg",
+        )
     ]
 
-    events = eventizer.eventize(detections)
 
-    assert events == []
-    assert any(entry["reason"] == "ambiguous_transition" for entry in eventizer.diagnostics)
+def test_ambiguous_complete_hand_transition_is_logged_and_rejected() -> None:
+    eventizer = _eventizer()
+    ambiguous_hand = ("fireball", "skeletons", "musketeer", "knight")
+    detections = (
+        _frame(0.0, INITIAL_HAND, source_frame="old_0.jpg")
+        + _frame(0.4, INITIAL_HAND, source_frame="old_1.jpg")
+        + _frame(0.8, INITIAL_HAND, source_frame="old_2.jpg")
+        + _frame(1.2, ambiguous_hand, source_frame="new_0.jpg")
+        + _frame(1.6, ambiguous_hand, source_frame="new_1.jpg")
+        + _frame(2.0, ambiguous_hand, source_frame="new_2.jpg")
+    )
+
+    assert eventizer.eventize(detections) == []
+    assert eventizer.diagnostics == [
+        {
+            "timestamp": 2.0,
+            "reason": "ambiguous_transition",
+            "previous_slots": list(INITIAL_HAND),
+            "current_slots": list(ambiguous_hand),
+            "removed_cards": ["cannon", "ice_spirit"],
+            "added_cards": ["musketeer", "knight"],
+        }
+    ]
+
+
+def test_eventizer_config_rejects_an_invalid_stability_window() -> None:
+    try:
+        EventizerConfig(stability_observations=4, stability_window=3)
+    except ValueError as exc:
+        assert "stability_window" in str(exc)
+    else:
+        raise AssertionError("Expected invalid eventizer configuration to fail")

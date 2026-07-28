@@ -23,7 +23,11 @@ class RoboflowDetectorBackend:
     ) -> None:
         self.api_key = api_key or os.getenv("ROBOFLOW_API_KEY")
         self.model_id = model_id or os.getenv("ROBOFLOW_MODEL_ID")
-        self.endpoint = (endpoint or os.getenv("ROBOFLOW_HOST") or "https://detect.roboflow.com").rstrip("/")
+        self.endpoint = (
+            endpoint
+            or os.getenv("ROBOFLOW_HOST")
+            or "https://serverless.roboflow.com"
+        ).rstrip("/")
 
         if not self.api_key:
             raise ValueError("ROBOFLOW_API_KEY environment variable is required for Roboflow inference")
