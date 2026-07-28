@@ -46,6 +46,7 @@ class HandEventizer:
         self._last_stable_slots: list[str | None] = [None, None, None, None]
         self._last_stable_confidences: list[float | None] = [None, None, None, None]
         self._last_stable_frames: list[str | None] = [None, None, None, None]
+        self.diagnostics: list[dict[str, object]] = []
 
     def observe_detections(self, detections: list[FrameDetection]) -> list[HandObservation]:
         if not detections:
@@ -195,6 +196,15 @@ class HandEventizer:
                         confidence=0.5,
                         source_frame=evidence_frame,
                     )
+                )
+            elif removed or added:
+                self.diagnostics.append(
+                    {
+                        "timestamp": stable_observation.timestamp,
+                        "reason": "ambiguous_transition",
+                        "previous_slots": list(previous_slots),
+                        "current_slots": list(current_slots),
+                    }
                 )
 
             previous_state = stable_observation

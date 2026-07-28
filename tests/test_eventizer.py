@@ -46,3 +46,19 @@ def test_confirmed_transition_emits_one_card_event() -> None:
     assert events[0].card == "cannon"
     assert events[0].player == "self"
     assert events[0].source_frame == "frame_d.jpg"
+
+
+def test_ambiguous_transition_is_logged_and_rejected() -> None:
+    eventizer = HandEventizer(EventizerConfig(confidence_threshold=0.5, stability_observations=3))
+    detections = [
+        FrameDetection(timestamp=0.0, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_a.jpg"),
+        FrameDetection(timestamp=0.4, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_b.jpg"),
+        FrameDetection(timestamp=0.8, label="x", confidence=0.9, x_center=0.18, y_center=0.2, width=0.05, height=0.05, canonical_label="cannon", source_frame="frame_c.jpg"),
+        FrameDetection(timestamp=1.2, label="x", confidence=0.9, x_center=0.38, y_center=0.2, width=0.05, height=0.05, canonical_label="fireball", source_frame="frame_d.jpg"),
+        FrameDetection(timestamp=1.6, label="x", confidence=0.9, x_center=0.58, y_center=0.2, width=0.05, height=0.05, canonical_label="skeletons", source_frame="frame_e.jpg"),
+    ]
+
+    events = eventizer.eventize(detections)
+
+    assert events == []
+    assert any(entry["reason"] == "ambiguous_transition" for entry in eventizer.diagnostics)
