@@ -15,12 +15,14 @@ def test_parse_roboflow_response_to_frame_detections() -> None:
     payload = {
         "predictions": [
             {
-                "class": "Hog Rider",
+                "class": "Kanon In Hand",
                 "confidence": 0.91,
-                "x_center": 0.41,
-                "y_center": 0.31,
-                "width": 0.12,
-                "height": 0.15,
+                "x": 205,
+                "y": 153,
+                "width": 48,
+                "height": 56,
+                "class_id": 29,
+                "detection_id": "det-001",
             }
         ]
     }
@@ -29,18 +31,23 @@ def test_parse_roboflow_response_to_frame_detections() -> None:
         payload,
         timestamp=1.5,
         source_frame="frame_000001.jpg",
+        source_image_width=512,
+        source_image_height=512,
     )
 
     assert detections == [
         FrameDetection(
             timestamp=1.5,
-            label="Hog Rider",
+            label="Kanon In Hand",
             confidence=0.91,
-            x_center=0.41,
-            y_center=0.31,
-            width=0.12,
-            height=0.15,
+            x_center=0.400390625,
+            y_center=0.298828125,
+            width=0.09375,
+            height=0.109375,
             source_frame="frame_000001.jpg",
+            class_id=29,
+            detection_id="det-001",
+            canonical_label="cannon",
         )
     ]
 

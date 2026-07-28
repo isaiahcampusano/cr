@@ -27,6 +27,9 @@ class FrameDetection:
     width: float
     height: float
     source_frame: str | None = None
+    class_id: int | None = None
+    detection_id: str | None = None
+    canonical_label: str | None = None
 
 
 class DetectorBackend(Protocol):

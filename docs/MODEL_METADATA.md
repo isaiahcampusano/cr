@@ -12,6 +12,15 @@ This project keeps model metadata alongside raw frame detections without storing
 - Preprocessing: stretch to 512 x 512
 - RF-DETR Small model ID: zay-clio1/clash-royale-of3d3-mts11-1-rfdetr-small-t1
 - RF-DETR Medium model ID: zay-clio1/clash-royale-of3d3-mts11-1-rfdetr-medium-t2
+- Medium metrics: mAP@50 91.3%, precision 84.1%, recall 85.8%
+- Small metrics: mAP@50 90.7%, precision 79.9%, recall 83.5%
+- Leading candidate: RF-DETR Medium, pending unseen-match comparison
+
+## Observed raw-label mappings
+
+- class_id 29: "Kanon In Hand" -> canonical card: cannon
+- class_id 53: "Skelet In hand" -> canonical card: skeletons
+- class_id 63: "Vuurbal In Hand" -> canonical card: fireball
 
 ## Pending confirmation
 

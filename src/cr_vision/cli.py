@@ -8,6 +8,7 @@ from cr_vision.arena import BOARD_TILE_COUNT, tile_by_id, tile_counts_by_region,
 from cr_vision.calibration import load_calibration, map_point_to_tile
 from cr_vision.detection_backend import FakeDetectorBackend, detect_video
 from cr_vision.frames import extract_frames, plan_frame_extraction
+from cr_vision.roboflow_backend import RoboflowDetectorBackend
 
 
 def _parse_resize(raw_value: str) -> tuple[int, int]:
@@ -71,6 +72,8 @@ def main() -> None:
     detect_parser.add_argument("--model-version", default="0")
     detect_parser.add_argument("--dataset-version", default="0")
     detect_parser.add_argument("--source-video")
+    detect_parser.add_argument("--backend", choices=["fake", "roboflow"], default="fake")
+    detect_parser.add_argument("--roboflow-endpoint")
 
     args = parser.parse_args()
 
@@ -170,9 +173,17 @@ def main() -> None:
             return
 
         if args.command == "detect-video":
+            if args.backend == "roboflow":
+                backend = RoboflowDetectorBackend(
+                    model_id=args.model_id,
+                    endpoint=args.roboflow_endpoint,
+                )
+            else:
+                backend = FakeDetectorBackend()
+
             detections = detect_video(
                 args.video_path,
-                backend=FakeDetectorBackend(),
+                backend=backend,
                 output_path=args.output,
                 model_id=args.model_id,
                 model_version=args.model_version,

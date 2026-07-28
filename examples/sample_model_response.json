@@ -1,12 +1,14 @@
 {
   "predictions": [
     {
-      "class": "Hog Rider",
+      "class": "Kanon In Hand",
       "confidence": 0.91,
-      "x_center": 0.41,
-      "y_center": 0.31,
-      "width": 0.12,
-      "height": 0.15
+      "x": 205,
+      "y": 153,
+      "width": 48,
+      "height": 56,
+      "class_id": 29,
+      "detection_id": "det-001"
     }
   ]
 }

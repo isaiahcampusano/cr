@@ -4,7 +4,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from cr_vision.cards import card_cost
 from cr_vision.detection import FrameDetection
+
+
+ROBOWFLOW_LABEL_MAP = {
+    "Kanon In Hand": "cannon",
+    "Skelet In hand": "skeletons",
+    "Vuurbal In Hand": "fireball",
+}
 
 
 class FakeDetectorBackend:
@@ -42,6 +50,8 @@ def parse_roboflow_response(
     *,
     timestamp: float,
     source_frame: str | None,
+    source_image_width: int | None = None,
+    source_image_height: int | None = None,
 ) -> list[FrameDetection]:
     predictions = payload.get("predictions", [])
     if not isinstance(predictions, list):
@@ -55,14 +65,36 @@ def parse_roboflow_response(
         try:
             label = str(prediction["class"])
             confidence = float(prediction["confidence"])
-            x_center = float(prediction["x_center"])
-            y_center = float(prediction["y_center"])
-            width = float(prediction["width"])
-            height = float(prediction["height"])
+            x_px = float(prediction["x"])
+            y_px = float(prediction["y"])
+            width_px = float(prediction["width"])
+            height_px = float(prediction["height"])
+            class_id = prediction.get("class_id")
+            detection_id = prediction.get("detection_id")
         except KeyError as exc:
             raise ValueError(f"Roboflow prediction missing required field: {exc}") from exc
         except (TypeError, ValueError) as exc:
             raise ValueError("Roboflow prediction values must be numeric") from exc
+
+        if source_image_width is not None and source_image_height is not None:
+            x_center = x_px / float(source_image_width)
+            y_center = y_px / float(source_image_height)
+            width = width_px / float(source_image_width)
+            height = height_px / float(source_image_height)
+        else:
+            x_center = x_px
+            y_center = y_px
+            width = width_px
+            height = height_px
+
+        canonical_label = ROBOWFLOW_LABEL_MAP.get(label)
+        if canonical_label is None:
+            try:
+                card_cost(label)
+            except ValueError:
+                canonical_label = None
+            else:
+                canonical_label = label
 
         detections.append(
             FrameDetection(
@@ -74,6 +106,9 @@ def parse_roboflow_response(
                 width=width,
                 height=height,
                 source_frame=source_frame,
+                class_id=int(class_id) if class_id is not None else None,
+                detection_id=str(detection_id) if detection_id is not None else None,
+                canonical_label=canonical_label,
             )
         )
 
@@ -99,7 +134,7 @@ def write_frame_detections_jsonl(
                 "source_video": source_video,
                 "timestamp": detection.timestamp,
                 "raw_label": detection.label,
-                "canonical_label": None,
+                "canonical_label": detection.canonical_label,
                 "confidence": detection.confidence,
                 "bbox": {
                     "x_center": detection.x_center,
@@ -108,6 +143,8 @@ def write_frame_detections_jsonl(
                     "height": detection.height,
                 },
                 "source_frame": detection.source_frame,
+                "class_id": detection.class_id,
+                "detection_id": detection.detection_id,
             }
             handle.write(json.dumps(payload, sort_keys=True))
             handle.write("\n")
@@ -131,6 +168,9 @@ def load_frame_detections_jsonl(path: Path) -> list[FrameDetection]:
                     width=float(payload["bbox"]["width"]),
                     height=float(payload["bbox"]["height"]),
                     source_frame=payload.get("source_frame"),
+                    class_id=int(payload["class_id"]) if payload.get("class_id") is not None else None,
+                    detection_id=str(payload["detection_id"]) if payload.get("detection_id") is not None else None,
+                    canonical_label=payload.get("canonical_label"),
                 )
             )
     return detections
